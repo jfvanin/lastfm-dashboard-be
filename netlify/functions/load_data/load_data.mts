@@ -2,45 +2,14 @@ import 'dotenv/config'
 import type { Config } from "@netlify/functions"
 import { MongoError } from 'mongodb';
 import { getDatabase, loadDB } from '../../../src/db-commons';
-
-// Define interfaces for the data structure
-interface Image {
-  size: string;
-  "#text": string;
-}
-
-interface Artist {
-  mbid: string;
-  "#text": string;
-}
-
-interface Album {
-  mbid: string;
-  "#text": string;
-}
-
-interface DateInfo {
-  uts?: string;
-  "#text": string;
-}
-
-interface Track {
-  artist: Artist;
-  streamable: string;
-  image: Image[];
-  mbid: string;
-  album: Album;
-  name: string;
-  url: string;
-  date: DateInfo;
-}
+import { Track, ArtistInfo, AlbumInfo } from '../../../src/common-types';
 
 const mongoClient = loadDB();
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 // Function to transform the array
-const transformArray = (arr: Track[]): { transformedData: Record<string, Record<string, Track[]>>, artists: string[], albums: string[] } => {
+export const transformArray = (arr: Track[]): { transformedData: Record<string, Record<string, Track[]>>, artists: string[], albums: string[] } => {
   const transformed: Record<string, Record<string, Track[]>> = {};
   const artistNames = new Set<string>();
   const albumKeys = new Set<string>();
@@ -95,9 +64,9 @@ const transformArray = (arr: Track[]): { transformedData: Record<string, Record<
   };
 };
 
-const getArtistCountryAndTags = async (artists: string[]): Promise<{ artist: string, country: string, tags: string[] }[]> => {
-  const processedList: { artist: string, country: string, tags: string[] }[] = [];
-  const processedFromDbList: { artist: string, country: string, tags: string[] }[] = [];
+export const getArtistCountryAndTags = async (artists: string[]): Promise<ArtistInfo[]> => {
+  const processedList: ArtistInfo[] = [];
+  const processedFromDbList: ArtistInfo[] = [];
 
   const database = await getDatabase(await mongoClient);
   const collection = database.collection('artist');
@@ -117,27 +86,31 @@ const getArtistCountryAndTags = async (artists: string[]): Promise<{ artist: str
       continue;
     }
 
-    const response = await fetch(`https://musicbrainz.org/ws/2/artist/?query=${artist}&fmt=json`, {
-      headers: {
-        'User-Agent': 'LastFmMeneDashboard/1.0 (jozeh5@gmail.com)'
+    try {
+      const response = await fetch(`https://musicbrainz.org/ws/2/artist/?query=${artist}&fmt=json`, {
+        headers: {
+          'User-Agent': 'LastFmMeneDashboard/1.1(jozeh5@gmail.com)'
+        }
+      });
+      console.log('response1:', response);
+      const apiResult = JSON.parse(await response.text());
+      const artistRetrieved = apiResult.artists[0] || null;
+      let country = "Unknown";
+      if (artistRetrieved?.area?.type === "Country") {
+        country = artistRetrieved.area.name;
+      } else if (artistRetrieved && artistRetrieved["begin-area"]?.type === "Country") {
+        country = artistRetrieved["begin-area"].name;
       }
-    });
-    console.log('response1:', response);
-    const apiResult = JSON.parse(await response.text());
-    const artistRetrieved = apiResult.artists[0] || null;
-    let country = "Unknown";
-    if (artistRetrieved?.area?.type === "Country") {
-      country = artistRetrieved.area.name;
-    } else if (artistRetrieved["begin-area"]?.type === "Country") {
-      country = artistRetrieved["begin-area"].name;
+      processedList.push({
+        artist,
+        country,
+        tags: artistRetrieved?.tags?.filter(tag => tag.count >= 2).map(tag => tag.name) || [],
+      });
+      // Delay for 1 second before making the next request
+      await delay(800);
+    } catch (error) {
+      console.log('ERROR onm getArtistCountryAndTags req:', error);
     }
-    processedList.push({
-      artist,
-      country,
-      tags: artistRetrieved?.tags?.filter(tag => tag.count >= 2).map(tag => tag.name) || [],
-    });
-    // Delay for 1 second before making the next request
-    await delay(800);
   }
 
   if (processedList.length > 0) {
@@ -155,9 +128,9 @@ const getArtistCountryAndTags = async (artists: string[]): Promise<{ artist: str
   return processedList.concat(processedFromDbList);
 };
 
-const getAlbumYear = async (albums: string[]): Promise<{ album: string, year?: number }[]> => {
-  const processedList: { album: string, year?: number }[] = [];
-  const processedFromDbList: { album: string, year?: number }[] = [];
+export const getAlbumYear = async (albums: string[]): Promise<AlbumInfo[]> => {
+  const processedList: AlbumInfo[] = [];
+  const processedFromDbList: AlbumInfo[] = [];
 
   const database = await getDatabase(await mongoClient);
   const collection = database.collection('album');
@@ -177,28 +150,32 @@ const getAlbumYear = async (albums: string[]): Promise<{ album: string, year?: n
       continue;
     }
 
-    const response = await fetch(`https://musicbrainz.org/ws/2/release-group/?release=${album}&fmt=json`, {
-      headers: {
-        'User-Agent': 'LastFmMeneDashboard/1.0 (jozeh5@gmail.com)'
+    try {
+      const response = await fetch(`https://musicbrainz.org/ws/2/release-group/?release=${album}&fmt=json`, {
+        headers: {
+          'User-Agent': 'LastFmMeneDashboard/1.1(jozeh5@gmail.com)'
+        }
+      });
+      console.log('response2:', response);
+      const apiResult = JSON.parse(await response.text());
+      const albumRetrieved = apiResult?.["release-groups"]?.[0] || null;
+      if (albumRetrieved && (albumRetrieved["primary-type"] !== "Compilation" &&
+        !albumRetrieved["secondary-types"].includes("Compilation"))) {
+        processedList.push({
+          album,
+          year: parseInt(albumRetrieved["first-release-date"].split('-')[0]),
+        });
+      } else {
+        processedList.push({
+          album,
+        });
       }
-    });
-    console.log('response2:', response);
-    const apiResult = JSON.parse(await response.text());
-    const albumRetrieved = apiResult["release-groups"][0] || null;
-    if (albumRetrieved && (albumRetrieved["primary-type"] !== "Compilation" &&
-      !albumRetrieved["secondary-types"].includes("Compilation"))) {
-      processedList.push({
-        album,
-        year: parseInt(albumRetrieved["first-release-date"].split('-')[0]),
-      });
-    } else {
-      processedList.push({
-        album,
-      });
-    }
 
-    // Delay for half second before making the next request
-    await delay(800);
+      // Delay for half second before making the next request
+      await delay(800);
+    } catch (error) {
+      console.log('ERROR on getAlbumYear req:', error);
+    }
   }
 
   if (processedList.length > 0) {
@@ -246,9 +223,7 @@ export default async (req: Request) => {
 
         // Get artist country and tags
         console.log('Getting artist country and tags...');
-        console.log('total req:', transformedArray.artists.length);
         const artistInfo = await getArtistCountryAndTags(transformedArray.artists);
-        console.log('total req:', transformedArray.albums.length);
         const albumYears = await getAlbumYear(transformedArray.albums);
 
         // Create a map for quick lookup
@@ -262,12 +237,13 @@ export default async (req: Request) => {
             transformedArray.transformedData[artist][album] = transformedArray.transformedData[artist][album].map(track => {
               const artistData = artistInfoMap.get(artist) || { country: 'Unknown', tags: [] };
               const albumYear = albumYearMap.get(album) || 'Unknown';
-              const updatedTrack = {
+              const { url, ...updatedTrack } = {
                 ...track,
                 user: user.name,
                 artistCountry: artistData.country,
                 artistTags: artistData.tags,
-                albumYear: albumYear
+                albumYear: albumYear,
+                image: track.image.filter(img => img.size === 'extralarge')
               };
 
               arrayToPersist.push(updatedTrack);
@@ -300,5 +276,5 @@ export default async (req: Request) => {
 }
 
 export const config: Config = {
-  schedule: "@hourly"
+  schedule: "0 * * * *"
 }

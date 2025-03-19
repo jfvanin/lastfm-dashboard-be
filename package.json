@@ -12,6 +12,7 @@
     "@types/node": "^22.10.6",
     "dotenv": "^16.4.7",
     "mongodb": "^6.12.0",
+    "netlify-cli": "^19.0.2",
     "typescript": "^4.9.5"
   }
 }

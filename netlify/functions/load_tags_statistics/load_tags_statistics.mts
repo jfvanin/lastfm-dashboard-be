@@ -17,7 +17,7 @@ export default async (request: Request, context: Context) => {
     const collection = database.collection('scrobbles');
 
     const startDate = new Date(`${year}-01-01T00:00:00Z`).getTime() / 1000;
-    const endDate = new Date(`${year}-12-31T23:59:59Z`).getTime() / 1000;
+    const endDate = year ? new Date(`${year}-12-31T23:59:59Z`).getTime() / 1000 : null;
     const pipeline = [
       {
         $match: {
@@ -32,21 +32,68 @@ export default async (request: Request, context: Context) => {
           })
         }
       },
-      {
-        $unwind: "$artistTags"
-      },
-      {
-        $group: {
-          _id: "$artistTags",
-          count: { $sum: 1 }
+      ...(year ? [
+        {
+          $unwind: "$artistTags"
+        },
+        {
+          $group: {
+            _id: "$artistTags",
+            count: { $sum: 1 }
+          }
+        },
+        {
+          $sort: { count: -1 }
+        },
+        {
+          $limit: 12
         }
-      },
-      {
-        $sort: { count: -1 }
-      },
-      {
-        $limit: 12
-      }
+      ] : [
+        {
+          $group: {
+            _id: { $year: { $toDate: { $multiply: [{ $toLong: "$date.uts" }, 1000] } } },
+            tags: { $push: "$artistTags" },
+            totalScrobbles: { $sum: 1 }
+          }
+        },
+        {
+          $unwind: "$tags"
+        },
+        {
+          $unwind: "$tags"
+        },
+        {
+          $group: {
+            _id: { year: "$_id", tag: "$tags" },
+            count: { $sum: 1 },
+            totalScrobbles: { $first: "$totalScrobbles" }
+          }
+        },
+        {
+          $sort: { "_id.year": 1, count: -1 }
+        },
+        {
+          $group: {
+            _id: "$_id.year",
+            tags: {
+              $push: {
+                tag: "$_id.tag",
+                count: "$count",
+                percentage: { $multiply: [{ $divide: ["$count", "$totalScrobbles"] }, 100] }
+              }
+            }
+          }
+        },
+        {
+          $project: {
+            _id: 1,
+            tags: { $slice: ["$tags", 10] }
+          }
+        },
+        {
+          $sort: { _id: 1 }
+        }
+      ])
     ];
 
     const result = await collection.aggregate(pipeline).toArray();
