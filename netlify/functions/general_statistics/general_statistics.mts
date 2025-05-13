@@ -81,7 +81,8 @@ export default async (request: Request, context: Context) => {
       {
         $match: {
           'user': user,
-          'date.uts': { $gte: startDate.toString(), $lte: endDate.toString() }
+          'date.uts': { $gte: startDate.toString(), $lte: endDate.toString() },
+          'album.#text': { $ne: '' }  // Exclude empty album names
         }
       },
       {
