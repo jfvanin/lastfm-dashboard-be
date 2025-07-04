@@ -82,7 +82,7 @@ export default async (request: Request, context: Context) => {
         $match: {
           'user': user,
           'date.uts': { $gte: startDate.toString(), $lte: endDate.toString() },
-          'album.#text': { $ne: '' }  // Exclude empty album names
+          'album.#text': { $ne: '', $exists: true, $not: { $regex: /^\s*$/ } }  // Exclude empty, null, undefined, and whitespace-only album names
         }
       },
       {
